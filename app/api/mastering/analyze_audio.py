@@ -7,6 +7,7 @@ import numpy as np
 
 WAVE_FORMAT_PCM = 1
 WAVE_FORMAT_IEEE_FLOAT = 3
+WAVE_FORMAT_EXTENSIBLE = 0xFFFE
 
 
 def read_chunk(file):
@@ -56,9 +57,43 @@ def parse_wav(file_path):
         if fmt is None or audio_data is None:
             raise ValueError("WAVのfmtまたはdataチャンクが見つかりません")
 
-        audio_format, channels, frame_rate, byte_rate, block_align, bits_per_sample = struct.unpack(
-            "<HHIIHH", fmt[:16]
-        )
+        (
+            container_audio_format,
+            channels,
+            frame_rate,
+            byte_rate,
+            block_align,
+            bits_per_sample,
+        ) = struct.unpack("<HHIIHH", fmt[:16])
+
+        audio_format = container_audio_format
+        valid_bits_per_sample = bits_per_sample
+
+        if container_audio_format == WAVE_FORMAT_EXTENSIBLE:
+            if len(fmt) < 40:
+                raise ValueError(
+                    "WAVE_FORMAT_EXTENSIBLEのfmtチャンクが短すぎます"
+                )
+
+            valid_bits_per_sample = struct.unpack(
+                "<H",
+                fmt[18:20],
+            )[0]
+
+            sub_format_code = struct.unpack(
+                "<H",
+                fmt[24:26],
+            )[0]
+
+            if sub_format_code not in (
+                WAVE_FORMAT_PCM,
+                WAVE_FORMAT_IEEE_FLOAT,
+            ):
+                raise ValueError(
+                    f"Unsupported WAVE_FORMAT_EXTENSIBLE sub format: {sub_format_code}"
+                )
+
+            audio_format = sub_format_code
 
         sample_width = bits_per_sample // 8
         frames = len(audio_data) // block_align
@@ -66,92 +101,202 @@ def parse_wav(file_path):
 
         return {
             "audio_format": audio_format,
+            "container_audio_format": container_audio_format,
             "channels": channels,
             "frame_rate": frame_rate,
             "sample_width": sample_width,
             "bits_per_sample": bits_per_sample,
+            "valid_bits_per_sample": valid_bits_per_sample,
             "frames": frames,
             "duration_seconds": duration_seconds,
             "audio_data": audio_data,
         }
 
 
+def decode_pcm_24(audio_data):
+    raw_bytes = np.frombuffer(audio_data, dtype=np.uint8)
+
+    usable_byte_count = (len(raw_bytes) // 3) * 3
+
+    if usable_byte_count == 0:
+        return []
+
+    raw_bytes = raw_bytes[:usable_byte_count].reshape(-1, 3)
+
+    samples = (
+        raw_bytes[:, 0].astype(np.int32)
+        | (raw_bytes[:, 1].astype(np.int32) << 8)
+        | (raw_bytes[:, 2].astype(np.int32) << 16)
+    )
+
+    negative_mask = (samples & 0x800000) != 0
+    samples[negative_mask] -= 1 << 24
+
+    return (
+        samples.astype(np.float32)
+        / float(2 ** 23)
+    ).tolist()
+
+
 def calculate_rms(audio_data, audio_format, bits_per_sample):
-    sample_width = bits_per_sample // 8
-    sample_count = len(audio_data) // sample_width
+    samples = decode_samples(
+        audio_data,
+        audio_format,
+        bits_per_sample,
+    )
 
-    if sample_count == 0:
-        return 0
+    if not samples:
+        return 0.0
 
-    if audio_format == WAVE_FORMAT_IEEE_FLOAT and bits_per_sample == 32:
-        samples = struct.unpack(f"<{sample_count}f", audio_data)
-        return math.sqrt(sum(sample * sample for sample in samples) / len(samples))
+    sample_array = np.asarray(samples, dtype=np.float64)
 
-    if audio_format == WAVE_FORMAT_PCM and bits_per_sample == 16:
-        samples = struct.unpack(f"<{sample_count}h", audio_data)
-        rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples))
-        return rms / float(2 ** 15)
-
-    if audio_format == WAVE_FORMAT_PCM and bits_per_sample == 32:
-        samples = struct.unpack(f"<{sample_count}i", audio_data)
-        rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples))
-        return rms / float(2 ** 31)
-
-    raise ValueError(f"Unsupported WAV format: audio_format={audio_format}, bits={bits_per_sample}")
+    return float(
+        np.sqrt(
+            np.mean(
+                np.square(sample_array)
+            )
+        )
+    )
 
 
 def decode_samples(audio_data, audio_format, bits_per_sample):
     sample_width = bits_per_sample // 8
+
+    if sample_width <= 0:
+        raise ValueError(
+            f"Invalid bits_per_sample: {bits_per_sample}"
+        )
+
     sample_count = len(audio_data) // sample_width
 
     if sample_count == 0:
         return []
 
-    if audio_format == WAVE_FORMAT_IEEE_FLOAT and bits_per_sample == 32:
-        return list(struct.unpack(f"<{sample_count}f", audio_data))
+    if (
+        audio_format == WAVE_FORMAT_IEEE_FLOAT
+        and bits_per_sample == 32
+    ):
+        samples = np.frombuffer(
+            audio_data,
+            dtype="<f4",
+        )
 
-    if audio_format == WAVE_FORMAT_PCM and bits_per_sample == 16:
-        samples = struct.unpack(f"<{sample_count}h", audio_data)
-        return [sample / float(2 ** 15) for sample in samples]
+        return samples.astype(np.float32).tolist()
 
-    if audio_format == WAVE_FORMAT_PCM and bits_per_sample == 32:
-        samples = struct.unpack(f"<{sample_count}i", audio_data)
-        return [sample / float(2 ** 31) for sample in samples]
+    if (
+        audio_format == WAVE_FORMAT_PCM
+        and bits_per_sample == 16
+    ):
+        samples = np.frombuffer(
+            audio_data,
+            dtype="<i2",
+        )
 
-    raise ValueError(f"Unsupported WAV format: audio_format={audio_format}, bits={bits_per_sample}")
+        return (
+            samples.astype(np.float32)
+            / float(2 ** 15)
+        ).tolist()
+
+    if (
+        audio_format == WAVE_FORMAT_PCM
+        and bits_per_sample == 24
+    ):
+        return decode_pcm_24(audio_data)
+
+    if (
+        audio_format == WAVE_FORMAT_PCM
+        and bits_per_sample == 32
+    ):
+        samples = np.frombuffer(
+            audio_data,
+            dtype="<i4",
+        )
+
+        return (
+            samples.astype(np.float32)
+            / float(2 ** 31)
+        ).tolist()
+
+    raise ValueError(
+        "Unsupported WAV format: "
+        f"audio_format={audio_format}, bits={bits_per_sample}"
+    )
 
 
-def estimate_frequency_balance(samples):
+def calculate_peak(samples):
+    if not samples:
+        return 0.0
+    return float(max(abs(sample) for sample in samples))
+
+
+def amplitude_to_dbfs(amplitude):
+    if amplitude <= 0:
+        return -120.0
+    return 20.0 * math.log10(amplitude)
+
+
+def calculate_zero_crossing_rate(samples):
+    if len(samples) < 2:
+        return 0.0
+
+    crossings = 0
+
+    for previous, current in zip(samples[:-1], samples[1:]):
+        if (previous < 0 <= current) or (previous >= 0 > current):
+            crossings += 1
+
+    return crossings / (len(samples) - 1)
+
+
+def calculate_spectral_features(samples, sample_rate):
     if len(samples) < 2:
         return {
-            "bass_energy": 0,
-            "mid_energy": 0,
-            "treble_energy": 0,
-            "zero_crossing_rate": 0,
+            "spectral_centroid": 0.0,
+            "spectral_rolloff": 0.0,
         }
 
-    zero_crossings = 0
+    data = np.array(samples, dtype=np.float32)
 
-    for index in range(1, len(samples)):
-        previous_sample = samples[index - 1]
-        current_sample = samples[index]
+    spectrum = np.abs(np.fft.rfft(data))
+    frequencies = np.fft.rfftfreq(len(data), d=1.0 / sample_rate)
 
-        if (previous_sample < 0 and current_sample >= 0) or (previous_sample >= 0 and current_sample < 0):
-            zero_crossings += 1
+    spectrum_sum = np.sum(spectrum)
 
-    zero_crossing_rate = zero_crossings / len(samples)
+    if spectrum_sum == 0:
+        return {
+            "spectral_centroid": 0.0,
+            "spectral_rolloff": 0.0,
+        }
 
-    bass_energy = max(0, min(100, round((0.08 - zero_crossing_rate) * 1250)))
-    treble_energy = max(0, min(100, round((zero_crossing_rate - 0.02) * 1250)))
-    mid_energy = max(0, min(100, 100 - abs(bass_energy - treble_energy)))
+    spectral_centroid = np.sum(frequencies * spectrum) / spectrum_sum
+
+    cumulative = np.cumsum(spectrum)
+    rolloff_index = np.searchsorted(cumulative, cumulative[-1] * 0.85)
+
+    spectral_rolloff = frequencies[
+        min(rolloff_index, len(frequencies) - 1)
+    ]
 
     return {
-        "bass_energy": bass_energy,
-        "mid_energy": mid_energy,
-        "treble_energy": treble_energy,
-        "zero_crossing_rate": zero_crossing_rate,
+        "spectral_centroid": float(spectral_centroid),
+        "spectral_rolloff": float(spectral_rolloff),
     }
 
+def estimate_frequency_balance(fft_analysis):
+    return {
+        "bass_energy": round(
+            (fft_analysis["sub_bass"] + fft_analysis["bass"]) / 2,
+            1,
+        ),
+        "mid_energy": round(
+            fft_analysis["mid"],
+            1,
+        ),
+        "treble_energy": round(
+            (fft_analysis["presence"] + fft_analysis["air"]) / 2,
+            1,
+        ),
+    }
 
 def analyze_fft(samples, sample_rate):
     if len(samples) < 2:
@@ -187,6 +332,109 @@ def analyze_fft(samples, sample_rate):
         key: round((value / maximum) * 100, 1)
         for key, value in energies.items()
     }
+def classify_section_density(rms, crest_factor, bass_energy):
+    if rms < 0.08:
+        return "low"
+
+    if rms >= 0.24 or bass_energy >= 75:
+        return "high"
+
+    if crest_factor >= 8 and rms < 0.18:
+        return "low"
+
+    return "medium"
+
+
+def analyze_sections(
+    samples,
+    sample_rate,
+    channels,
+    section_duration_seconds=5,
+):
+    if not samples or sample_rate <= 0 or channels <= 0:
+        return []
+
+    sample_array = np.array(samples, dtype=np.float32)
+
+    usable_sample_count = (
+        len(sample_array) // channels
+    ) * channels
+
+    if usable_sample_count == 0:
+        return []
+
+    sample_array = sample_array[:usable_sample_count]
+    frame_array = sample_array.reshape(-1, channels)
+    mono_samples = np.mean(frame_array, axis=1)
+
+    section_frame_count = max(
+        1,
+        int(sample_rate * section_duration_seconds),
+    )
+
+    sections = []
+    total_frames = len(mono_samples)
+
+    for start_frame in range(0, total_frames, section_frame_count):
+        end_frame = min(
+            start_frame + section_frame_count,
+            total_frames,
+        )
+
+        section_samples = mono_samples[start_frame:end_frame]
+
+        if len(section_samples) == 0:
+            continue
+
+        section_rms = float(
+            np.sqrt(np.mean(np.square(section_samples)))
+        )
+        section_peak = float(np.max(np.abs(section_samples)))
+        section_crest_factor = (
+            section_peak / section_rms
+            if section_rms > 0
+            else 0.0
+        )
+
+        section_fft = analyze_fft(
+            section_samples.tolist(),
+            sample_rate,
+        )
+        section_frequency_balance = estimate_frequency_balance(
+            section_fft
+        )
+
+        sections.append(
+            {
+                "start": round(start_frame / sample_rate, 2),
+                "end": round(end_frame / sample_rate, 2),
+                "rms": round(section_rms, 4),
+                "peak_dbfs": round(
+                    amplitude_to_dbfs(section_peak),
+                    2,
+                ),
+                "crest_factor": round(
+                    section_crest_factor,
+                    2,
+                ),
+                "bass_energy": section_frequency_balance[
+                    "bass_energy"
+                ],
+                "mid_energy": section_frequency_balance[
+                    "mid_energy"
+                ],
+                "treble_energy": section_frequency_balance[
+                    "treble_energy"
+                ],
+                "density": classify_section_density(
+                    section_rms,
+                    section_crest_factor,
+                    section_frequency_balance["bass_energy"],
+                ),
+            }
+        )
+
+    return sections
 
 
 def analyze_wav(file_path):
@@ -201,8 +449,28 @@ def analyze_wav(file_path):
         wav_info["audio_format"],
         wav_info["bits_per_sample"],
     )
-    frequency_balance = estimate_frequency_balance(samples)
     fft_analysis = analyze_fft(samples, wav_info["frame_rate"])
+    frequency_balance = estimate_frequency_balance(fft_analysis)
+    peak = calculate_peak(samples)
+    peak_dbfs = amplitude_to_dbfs(peak)
+    crest_factor = peak / normalized_rms if normalized_rms > 0 else 0
+
+    rms_dbfs = amplitude_to_dbfs(normalized_rms)
+    dynamic_range_db = peak_dbfs - rms_dbfs if normalized_rms > 0 else 0
+
+    zero_crossing_rate = calculate_zero_crossing_rate(samples)
+
+    spectral_features = calculate_spectral_features(
+        samples,
+        wav_info["frame_rate"],
+    )
+
+    sections = analyze_sections(
+        samples,
+        wav_info["frame_rate"],
+        wav_info["channels"],
+        section_duration_seconds=5,
+    )
 
     return {
         "channels": wav_info["channels"],
@@ -212,12 +480,26 @@ def analyze_wav(file_path):
         "duration_seconds": round(wav_info["duration_seconds"], 2),
         "rms": normalized_rms,
         "audio_format": wav_info["audio_format"],
+        "container_audio_format": wav_info["container_audio_format"],
         "bits_per_sample": wav_info["bits_per_sample"],
+        "valid_bits_per_sample": wav_info["valid_bits_per_sample"],
         "bass_energy": frequency_balance["bass_energy"],
         "mid_energy": frequency_balance["mid_energy"],
         "treble_energy": frequency_balance["treble_energy"],
-        "zero_crossing_rate": frequency_balance["zero_crossing_rate"],
+
+        "peak_dbfs": round(peak_dbfs, 2),
+        "crest_factor": round(crest_factor, 2),
+        "dynamic_range_db": round(dynamic_range_db, 2),
+        "zero_crossing_rate": round(zero_crossing_rate, 6),
+        "spectral_centroid": round(
+            spectral_features["spectral_centroid"], 2
+        ),
+        "spectral_rolloff": round(
+            spectral_features["spectral_rolloff"], 2
+        ),
+
         "fft": fft_analysis,
+        "sections": sections,
     }
 
 
