@@ -1651,7 +1651,7 @@ const outputDirectory = join(process.cwd(), "public", "generated");
   "-ac",
   "2",
   "-c:a",
-  "pcm_s16le",
+  "pcm_f32le",
   analysisInputPath,
 ]);
 const scriptPath = join(
@@ -2676,7 +2676,7 @@ console.log(
 );
 
 const inputMeasuredLoudness = await measureLoudness(
-  analysisInputPath,
+  inputPath,
   analysis.mastering.targetLufs,
 );
 
