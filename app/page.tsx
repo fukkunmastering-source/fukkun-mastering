@@ -34,27 +34,6 @@ type Understanding = {
   targetSound: string;
 };
 
-const eqBands = [
-  {
-    icon: "🔊",
-    label: "低音",
-    range: "20〜60Hz",
-    keywords: ["20〜60Hz", "20-60Hz", "低音", "重低音", "超低音"],
-  },
-  {
-    icon: "🎤",
-    label: "声の聞こえやすさ",
-    range: "250Hz〜2kHz",
-    keywords: ["250Hz〜2kHz", "250Hz-2kHz", "声", "ボーカル", "中音", "中域"],
-  },
-  {
-    icon: "✨",
-    label: "高音の抜け感",
-    range: "2kHz〜8kHz",
-    keywords: ["2kHz〜8kHz", "2kHz-8kHz", "高音", "抜け", "明瞭"],
-  },
-];
-
 const getOptimizationValue = (score: number) => {
   if (score >= 85) {
     return { value: "+4", action: "BOOST" };
@@ -78,92 +57,7 @@ const getLoudnessAdjustment = (loudness: number) => {
   return "-2 dB";
 };
 
-const getEqAdjustment = (eqSuggestion: string, keywords: string[]) => {
-  const matchedText =
-    eqSuggestion
-      .split(/[、,]/)
-      .find((part) => keywords.some((keyword) => part.includes(keyword))) ??
-    eqSuggestion;
-  if (/カット|下げ|抑え|減ら|整理/.test(matchedText)) {
-    return {
-      icon: "⬇",
-      text: "少し下げる",
-      colorClass: "text-cyan-200",
-    };
-  }
-  if (/ブースト|上げ|足す|増や|前に出す/.test(matchedText)) {
-    return {
-      icon: "⬆",
-      text: "少し上げる",
-      colorClass: "text-pink-200",
-    };
-  }
-  return {
-    icon: "↔",
-    text: "少し整える",
-    colorClass: "text-violet-200",
-  };
-};
-type AiUnitStatus = "standby" | "analyzing" | "complete";
-
 type PixelCode = "0" | "1" | "2" | "3" | "4" | "5";
-
-const aiUnitFrames: Record<AiUnitStatus, string[]> = {
-  standby: [
-    "0000004400000000",
-    "0000041140000000",
-    "0000411114000000",
-    "0004111111400000",
-    "0041111111140000",
-    "0411331133114000",
-    "4111331133111400",
-    "4111111111111400",
-    "4111222222111400",
-    "0411111111114000",
-    "0041111111140000",
-    "0004115511400000",
-    "0000455554000000",
-    "0004555555400000",
-    "0045550055540000",
-    "0004400004400000",
-  ],
-  analyzing: [
-    "0000004400000000",
-    "0000041140000000",
-    "0000411114000000",
-    "0004111111400000",
-    "0041111111140000",
-    "0411333333114000",
-    "4111333333111400",
-    "4111111111111400",
-    "4111222222111400",
-    "0411111111114000",
-    "0041111111140000",
-    "0004115511400000",
-    "0000455554000000",
-    "0004555555400000",
-    "0045550055540000",
-    "0004400004400000",
-  ],
-  complete: [
-    "0000004400000000",
-    "0000041140000000",
-    "0000411114000000",
-    "0004111111400000",
-    "0041111111140000",
-    "0411331133114000",
-    "4111331133111400",
-    "4111111111111400",
-    "4111002220011400",
-    "0411111111114000",
-    "0041111111140000",
-    "0004115511400000",
-    "0000455554000000",
-    "0004555555400000",
-    "0045550055540000",
-    "0004400004400000",
-  ],
-};
 const pixelClassMap: Record<PixelCode, string> = {
   "0": "bg-transparent",
   "1": "bg-cyan-100 shadow-[0_0_6px_rgba(207,250,254,0.75)]",
@@ -171,39 +65,6 @@ const pixelClassMap: Record<PixelCode, string> = {
   "3": "bg-white shadow-[0_0_10px_rgba(255,255,255,0.95)]",
   "4": "bg-violet-400 shadow-[0_0_7px_rgba(167,139,250,0.85)]",
   "5": "bg-cyan-500 shadow-[0_0_7px_rgba(6,182,212,0.85)]",
-};
-const AiUnitPixel = ({ status }: { status: AiUnitStatus }) => {
-  const frame = aiUnitFrames[status];
-  return (
-    <div className="inline-flex flex-col items-center gap-2 border border-cyan-300/30 bg-[#020617]/90 p-3 shadow-[0_0_18px_rgba(34,211,238,0.18)]">
-      <div className="grid grid-cols-16 gap-px [image-rendering:pixelated]">
-        {frame.flatMap((row, rowIndex) =>
-          row.split("").map((pixel, columnIndex) => (
-            <span
-              key={`${rowIndex}-${columnIndex}`}
-              className={`h-1.5 w-1.5 ${pixelClassMap[pixel as PixelCode]}`}
-            />
-          )),
-        )}
-      </div>
-      <div className="flex gap-1">
-        {[0, 1, 2].map((light) => (
-          <span
-            key={light}
-            className={`h-1.5 w-1.5 ${
-              status === "analyzing"
-                ? "animate-pulse bg-pink-300"
-                : status === "complete"
-                  ? "bg-emerald-300"
-                  : light === 0
-                    ? "bg-cyan-300"
-                    : "bg-slate-700"
-            }`}
-          />
-        ))}
-      </div>
-    </div>
-  );
 };
 const recordPixels = [
   "0000004444000000",
@@ -287,11 +148,6 @@ export default function Home() {
     },
     [originalFileUrl],
   );
-
-  const renderStars = (score: number) => {
-    const starCount = Math.round(score / 20);
-    return "★".repeat(starCount) + "☆".repeat(5 - starCount);
-  };
 
   const handleAddTargetSound = (option: string) => {
     setTargetSound((currentText) => {
