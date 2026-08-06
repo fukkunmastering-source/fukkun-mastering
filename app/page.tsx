@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import InputPanel from "./components/InputPanel";
 import SystemStatusPanel from "./components/SystemStatusPanel";
 import SystemAnalysisPanel from "./components/SystemAnalysisPanel";
@@ -266,7 +266,6 @@ export default function Home() {
   const [savedCount, setSavedCount] = useState(0);
   const [masteredFileName, setMasteredFileName] = useState("");
   const [masteredFileUrl, setMasteredFileUrl] = useState("");
-  const [originalFileUrl, setOriginalFileUrl] = useState("");
   const [activeAudio, setActiveAudio] = useState<"original" | "mastered">(
     "mastered",
   );
@@ -275,19 +274,19 @@ export default function Home() {
     null,
   );
 
-  useEffect(() => {
-    if (!selectedFile) {
-      setOriginalFileUrl("");
-      return;
-    }
+  const originalFileUrl = useMemo(
+    () => (selectedFile ? URL.createObjectURL(selectedFile) : ""),
+    [selectedFile],
+  );
 
-    const objectUrl = URL.createObjectURL(selectedFile);
-    setOriginalFileUrl(objectUrl);
-
-    return () => {
-      URL.revokeObjectURL(objectUrl);
-    };
-  }, [selectedFile]);
+  useEffect(
+    () => () => {
+      if (originalFileUrl) {
+        URL.revokeObjectURL(originalFileUrl);
+      }
+    },
+    [originalFileUrl],
+  );
 
   const renderStars = (score: number) => {
     const starCount = Math.round(score / 20);

@@ -130,8 +130,8 @@ export default function InputPanel({
           {referenceFile ? referenceFile.name : "NO REFERENCE SELECTED"}
         </p>
 
-        <p className="mt-2 text-xs font-bold text-violet-300/80">
-          任意：目標にしたい参考曲のWAVまたはMP3を選択
+        <p className="mt-2 border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-100">
+          参考曲解析は準備中です。現在のマスタリング結果には反映されません。
         </p>
       </div>
 

@@ -9,9 +9,9 @@ import { join } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 const execFileAsync = promisify(execFile);
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+
+const MAX_AUDIO_FILE_SIZE_BYTES = 250 * 1024 * 1024;
+const SUPPORTED_AUDIO_EXTENSIONS = new Set(["wav", "mp3"]);
 
 type SectionMasteringAdjustment = {
   start: number;
@@ -1169,7 +1169,7 @@ const validateMasteringSettings = (
 ): MasteringSettings => {
   const corrections: string[] = [];
 
-  let bassGain = settings.bassGain;
+  const bassGain = settings.bassGain;
   let trebleGain = settings.trebleGain;
   let dynamicEqRange = settings.dynamicEq.range;
   let compressorRatio = settings.compressor.ratio;
@@ -1369,6 +1369,10 @@ async function evaluateGroundTruth(
       summary: "",
     };
   }
+
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
   const afterLoudness = Number(after.loudness);
 
@@ -1578,6 +1582,29 @@ if (!(audioFile instanceof File)) {
       { status: 400 },
     );
   }
+
+  const fileExtension = audioFile.name.split(".").at(-1)?.toLowerCase() ?? "";
+
+  if (!SUPPORTED_AUDIO_EXTENSIONS.has(fileExtension)) {
+    return Response.json(
+      {
+        success: false,
+        message: "WAVまたはMP3ファイルを選択してください。",
+      },
+      { status: 415 },
+    );
+  }
+
+  if (audioFile.size === 0 || audioFile.size > MAX_AUDIO_FILE_SIZE_BYTES) {
+    return Response.json(
+      {
+        success: false,
+        message: "音源ファイルは1バイト以上250MB以下にしてください。",
+      },
+      { status: 413 },
+    );
+  }
+
   console.log("受け取ったファイル", {
     name: audioFile.name,
     size: audioFile.size,
@@ -1588,11 +1615,15 @@ if (!(audioFile instanceof File)) {
   const buffer = Buffer.from(arrayBuffer);
   const safeBaseName = audioFile.name
     .replace(/\.[^/.]+$/, "")
-    .replace(/[^a-zA-Z0-9ぁ-んァ-ヶ一-龠_-]/g, "_");
+    .replace(/[^a-zA-Z0-9ぁ-んァ-ヶ一-龠_-]/g, "_")
+    .slice(0, 120) || "audio";
   const uniqueId = `${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 8)}`;
-const inputPath = join("/tmp", `${uniqueId}-${audioFile.name}`);
+const inputPath = join(
+  "/tmp",
+  `${uniqueId}-${safeBaseName}.${fileExtension}`,
+);
 const analysisInputPath = join(
   "/tmp",
   `${uniqueId}-analysis-input.wav`,
@@ -1773,6 +1804,10 @@ const fallbackSettings: MasteringSettings = {
 let masteringSettings = fallbackSettings;
 if (process.env.OPENAI_API_KEY) {
   try {
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
     const aiResponse = await openai.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       input: [
@@ -2731,6 +2766,7 @@ console.log(
 return Response.json({
   success: true,
   message: "解析とマスタリングが完了しました。",
+  referenceApplied: false,
   fileName: audioFile.name,
   fileSizeMB,
   masteredFileName,

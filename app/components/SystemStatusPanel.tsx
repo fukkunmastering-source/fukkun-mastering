@@ -364,7 +364,9 @@ export default function SystemStatusPanel({
 
           {[
             "LOADING INPUT AUDIO",
-            "ANALYZING REFERENCE TRACK",
+            referenceFile
+              ? "REFERENCE ANALYSIS NOT YET APPLIED"
+              : "REFERENCE TRACK NOT SET",
             "MEASURING LOUDNESS BALANCE",
             "SCANNING TONE PROFILE",
             "GENERATING MASTERING PROFILE",
