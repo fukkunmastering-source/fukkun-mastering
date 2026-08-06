@@ -2578,6 +2578,7 @@ const preLoudnormHeadroomFilter =
   `volume=${preLoudnormGainDb}dB`;
 
 const audioFilters = [
+  preLoudnormHeadroomFilter,
   "highpass=f=25",
   `equalizer=f=80:t=q:w=1:g=${analysis.mastering.bassGain}`,
   `equalizer=f=1200:t=q:w=1:g=${analysis.mastering.vocalGain}`,
@@ -2586,7 +2587,6 @@ const audioFilters = [
   ...backingVocalFilters,
   dynamicLowEndEq,
   adaptiveCompressor,
-  preLoudnormHeadroomFilter,
 ].join(",");
  console.log("ffmpegマスタリング開始", {
   inputPath,
