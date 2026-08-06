@@ -21,6 +21,7 @@ type SystemStatusPanelProps = {
   activeAudio: "original" | "mastered";
   originalFileUrl: string;
   masteredFileUrl: string;
+  isLoudnessMatched: boolean;
   audioRef: RefObject<HTMLAudioElement | null>;
   onSwitchAudio: (source: "original" | "mastered") => void;
   onDownload: () => void;
@@ -141,6 +142,7 @@ export default function SystemStatusPanel({
   activeAudio,
   originalFileUrl,
   masteredFileUrl,
+  isLoudnessMatched,
   audioRef,
   onSwitchAudio,
   onDownload,
@@ -216,6 +218,12 @@ export default function SystemStatusPanel({
 
                   <p className="mt-1 text-xs font-bold text-violet-200">
                     元音源とマスタリング後を同じ位置で切り替え
+                  </p>
+
+                  <p className="mt-1 text-[10px] font-black tracking-[0.14em] text-emerald-300">
+                    {isLoudnessMatched
+                      ? "✓ LOUDNESS MATCHED / 音量差を補正済み"
+                      : "再生音量は未補正"}
                   </p>
                 </div>
 
