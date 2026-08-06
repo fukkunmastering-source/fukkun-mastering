@@ -13,6 +13,12 @@ type Analysis = {
   vocal: number;
   recommendation: string;
   eqSuggestion?: string;
+  measuredLoudness?: {
+    integratedLufs: number | null;
+  } | null;
+  inputMeasuredLoudness?: {
+    integratedLufs: number | null;
+  } | null;
   mastering: {
     bassGain: number;
     vocalGain: number;
@@ -140,6 +146,34 @@ export default function Home() {
     [selectedFile],
   );
 
+  const comparisonLevels = useMemo(() => {
+    const inputLufs = analysis?.inputMeasuredLoudness?.integratedLufs;
+    const masteredLufs = analysis?.measuredLoudness?.integratedLufs;
+
+    if (
+      typeof inputLufs !== "number" ||
+      !Number.isFinite(inputLufs) ||
+      typeof masteredLufs !== "number" ||
+      !Number.isFinite(masteredLufs)
+    ) {
+      return {
+        isMatched: false,
+        originalVolume: 1,
+        masteredVolume: 1,
+      };
+    }
+
+    const comparisonLufs = Math.min(inputLufs, masteredLufs);
+    const toVolume = (sourceLufs: number) =>
+      Math.min(1, Math.max(0, 10 ** ((comparisonLufs - sourceLufs) / 20)));
+
+    return {
+      isMatched: true,
+      originalVolume: toVolume(inputLufs),
+      masteredVolume: toVolume(masteredLufs),
+    };
+  }, [analysis]);
+
   useEffect(
     () => () => {
       if (originalFileUrl) {
@@ -148,6 +182,15 @@ export default function Home() {
     },
     [originalFileUrl],
   );
+
+  useEffect(() => {
+    if (!audioRef.current) return;
+
+    audioRef.current.volume =
+      activeAudio === "original"
+        ? comparisonLevels.originalVolume
+        : comparisonLevels.masteredVolume;
+  }, [activeAudio, comparisonLevels]);
 
   const handleAddTargetSound = (option: string) => {
     setTargetSound((currentText) => {
@@ -361,6 +404,7 @@ export default function Home() {
            activeAudio={activeAudio}
            originalFileUrl={originalFileUrl}
            masteredFileUrl={masteredFileUrl}
+           isLoudnessMatched={comparisonLevels.isMatched}
            audioRef={audioRef}
            onSwitchAudio={switchAudio}
            onDownload={handleDownload}
