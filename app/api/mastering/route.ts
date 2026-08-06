@@ -1351,6 +1351,27 @@ async function measureLoudness(
     targetOffset: Number(measured.target_offset),
   };
 }
+
+async function probeSampleRate(filePath: string) {
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "a:0",
+    "-show_entries",
+    "stream=sample_rate",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ]);
+
+  const sampleRate = Number(stdout.trim());
+
+  return Number.isInteger(sampleRate) && sampleRate >= 8000 && sampleRate <= 192000
+    ? sampleRate
+    : 44100;
+}
+
 async function evaluateGroundTruth(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
@@ -1641,6 +1662,8 @@ const outputDirectory = join(process.cwd(), "public", "generated");
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(inputPath, buffer);
   try {
+  const sourceSampleRate = await probeSampleRate(inputPath);
+
   await execFileAsync("ffmpeg", [
   "-y",
   "-i",
@@ -2589,7 +2612,7 @@ const audioFilters = [
       "-af",
       audioFilters,
       "-ar",
-      "44100",
+      String(sourceSampleRate),
       "-ac",
       "2",
       "-c:a",
@@ -2645,7 +2668,7 @@ if (canRunSecondPass && firstPassLoudness) {
     "-af",
     secondPassFilters,
     "-ar",
-    "44100",
+    String(sourceSampleRate),
     "-ac",
     "2",
     "-c:a",
@@ -2680,10 +2703,24 @@ const inputMeasuredLoudness = await measureLoudness(
   analysis.mastering.targetLufs,
 );
 
+await execFileAsync("ffmpeg", [
+  "-y",
+  "-i",
+  outputPath,
+  "-vn",
+  "-ar",
+  "44100",
+  "-ac",
+  "2",
+  "-c:a",
+  "pcm_f32le",
+  analysisInputPath,
+]);
+
 const { stdout: masteredAnalysisStdout } =
   await execFileAsync("python3", [
     scriptPath,
-    outputPath,
+    analysisInputPath,
   ]);
 
 const masteredPythonAnalysis = JSON.parse(
