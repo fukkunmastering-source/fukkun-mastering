@@ -30,8 +30,11 @@ OpenAIを使った設定生成は任意です。使用する場合のみ `OPENAI
 ```bash
 npm ci
 npm run lint
-npx tsc --noEmit
+npm run typecheck
 npm run build
+npm run test:smoke
 ```
 
 開発環境の制約でTurbopackを利用できない場合は、`npx next build --webpack` で本番ビルドを確認できます。
+
+`npm run test:smoke` は合成WAVを作成し、APIキーなしで解析から24bit WAV出力までを自動確認します。
