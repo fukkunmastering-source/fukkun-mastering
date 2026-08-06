@@ -364,10 +364,11 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("APIエラー", response.status, errorText);
+        const errorData = await response.json().catch(() => null);
+        console.error("APIエラー", response.status, errorData);
         alert(
-          "マスタリング処理でエラーが出ました。VS Codeのターミナルログを確認してください。",
+          errorData?.message ??
+            "マスタリング処理に失敗しました。時間を置いてもう一度お試しください。",
         );
         setIsProcessing(false);
         setProgress(0);
@@ -394,7 +395,7 @@ export default function Home() {
     } catch (error) {
       console.error("処理中にエラー", error);
       alert(
-        "処理中にエラーが出ました。VS Codeのターミナルログを確認してください。",
+        "サーバーへ接続できませんでした。時間を置いてもう一度お試しください。",
       );
       setIsProcessing(false);
       setProgress(0);

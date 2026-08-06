@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import {
   mkdir,
+  readdir,
+  stat,
   writeFile,
   unlink,
   rename,
@@ -12,6 +14,34 @@ const execFileAsync = promisify(execFile);
 
 const MAX_AUDIO_FILE_SIZE_BYTES = 250 * 1024 * 1024;
 const SUPPORTED_AUDIO_EXTENSIONS = new Set(["wav", "mp3"]);
+const COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
+const GENERATED_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+const execFileWithTimeout = (
+  file: string,
+  args: string[],
+) => execFileAsync(file, args, {
+  timeout: COMMAND_TIMEOUT_MS,
+  maxBuffer: 10 * 1024 * 1024,
+});
+
+async function removeExpiredGeneratedFiles(directory: string) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const expirationTime = Date.now() - GENERATED_FILE_MAX_AGE_MS;
+
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".wav"))
+      .map(async (entry) => {
+        const filePath = join(directory, entry.name);
+        const fileStats = await stat(filePath);
+
+        if (fileStats.mtimeMs < expirationTime) {
+          await unlink(filePath).catch(() => {});
+        }
+      }),
+  );
+}
 
 type SectionMasteringAdjustment = {
   start: number;
@@ -1317,7 +1347,7 @@ async function measureLoudness(
   filePath: string,
   targetLufs = -12,
 ) {
-  const { stderr } = await execFileAsync("ffmpeg", [
+  const { stderr } = await execFileWithTimeout("ffmpeg", [
     "-hide_banner",
     "-i",
     filePath,
@@ -1353,7 +1383,7 @@ async function measureLoudness(
 }
 
 async function probeSampleRate(filePath: string) {
-  const { stdout } = await execFileAsync("ffprobe", [
+  const { stdout } = await execFileWithTimeout("ffprobe", [
     "-v",
     "error",
     "-select_streams",
@@ -1393,6 +1423,8 @@ async function evaluateGroundTruth(
 
   const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
+    timeout: 60_000,
+    maxRetries: 1,
   });
 
   const afterLoudness = Number(after.loudness);
@@ -1660,11 +1692,12 @@ const outputDirectory = join(process.cwd(), "public", "generated");
   `${uniqueId}-first-pass-mastered.wav`,
 );
   await mkdir(outputDirectory, { recursive: true });
+  await removeExpiredGeneratedFiles(outputDirectory);
   await writeFile(inputPath, buffer);
   try {
   const sourceSampleRate = await probeSampleRate(inputPath);
 
-  await execFileAsync("ffmpeg", [
+  await execFileWithTimeout("ffmpeg", [
   "-y",
   "-i",
   inputPath,
@@ -1684,7 +1717,7 @@ const scriptPath = join(
   "mastering",
   "analyze_audio.py",
 );
-const { stdout } = await execFileAsync("python3", [
+const { stdout } = await execFileWithTimeout("python3", [
   scriptPath,
   analysisInputPath,
 ]);
@@ -1829,6 +1862,8 @@ if (process.env.OPENAI_API_KEY) {
   try {
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
+      timeout: 60_000,
+      maxRetries: 1,
     });
 
     const aiResponse = await openai.responses.create({
@@ -2604,7 +2639,7 @@ const audioFilters = [
   preLoudnormHeadroomFilter,
   audioFilters,
 });
-    await execFileAsync("ffmpeg", [
+    await execFileWithTimeout("ffmpeg", [
       "-y",
       "-i",
       inputPath,
@@ -2660,7 +2695,7 @@ if (canRunSecondPass && firstPassLoudness) {
       : []),
   ].join(",");
 
-  await execFileAsync("ffmpeg", [
+  await execFileWithTimeout("ffmpeg", [
     "-y",
     "-i",
     firstPassOutputPath,
@@ -2703,7 +2738,7 @@ const inputMeasuredLoudness = await measureLoudness(
   analysis.mastering.targetLufs,
 );
 
-await execFileAsync("ffmpeg", [
+await execFileWithTimeout("ffmpeg", [
   "-y",
   "-i",
   outputPath,
@@ -2718,7 +2753,7 @@ await execFileAsync("ffmpeg", [
 ]);
 
 const { stdout: masteredAnalysisStdout } =
-  await execFileAsync("python3", [
+  await execFileWithTimeout("python3", [
     scriptPath,
     analysisInputPath,
   ]);
